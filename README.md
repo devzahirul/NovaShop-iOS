@@ -9,7 +9,9 @@
 ![Swift 6](https://img.shields.io/badge/Swift-6.0_strict_concurrency-F05138?logo=swift&logoColor=white)
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-000?logo=apple)
 ![SwiftUI](https://img.shields.io/badge/UI-SwiftUI_%2B_Observation-0A84FF)
-![Tests](https://img.shields.io/badge/tests-79_unit_%2B_UI-34C759)
+![Tests](https://img.shields.io/badge/tests-115_unit_%2B_UI-34C759)
+![Backend](https://img.shields.io/badge/backend-Supabase_(free)-3ECF8E?logo=supabase&logoColor=white)
+![Offline](https://img.shields.io/badge/cart-offline--first_%2B_sync-A2644A)
 ![Dependencies](https://img.shields.io/badge/3rd--party_dependencies-0-8E8E93)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -43,7 +45,9 @@
 | **Architecture** | MVVM with `@Observable`, 18 SPM modules, compiler-enforced layering, typed `Route` navigation, single composition root. [Why →](#architecture) |
 | **Concurrency** | Swift 6 language mode, *complete* checking, **0 warnings**. Actors for state, `async let` / task groups, view-bound cancellation, single-flight requests, `#isolation`-inheriting helpers. [How →](#swift-concurrency) |
 | **Performance** | Launch work deferred until after first frame, static linking (0 embedded frameworks), ImageIO downsampling + CDN width buckets (**2.3 MB → 34 KB** per image), signposts on every critical path, MetricKit in the field. [Numbers →](#performance) |
-| **Quality** | 79 unit tests (swift-testing) across 6 targets + critical-path UI tests + automated screenshots. SwiftLint `--strict` clean. CI on every PR. |
+| **Backend** | Supabase (Postgres + Auth + Row Level Security) through **our own REST layer — no SDK**. Checkout is one server transaction (locks stock, prices from the DB, idempotent). Runs on bundled demo data when no backend is configured. [Details →](#backend-supabase--security) |
+| **Offline-first** | Cart & wishlist are local-first: instant writes, per-record sync state, coalesced uploads, server-wins reconciliation, background sync. Network monitoring, 401 → refresh → retry, typed error handling. [Details →](#offline-first-cart--sync) |
+| **Quality** | 115 unit tests (swift-testing) across 6 targets + critical-path UI tests + automated screenshots. SwiftLint `--strict` clean. CI on every PR. |
 | **App Store readiness** | Privacy manifest, in-app account deletion, guest browsing (5.1.1), Dynamic Type, VoiceOver, Reduce Motion, dark mode, haptics, Keychain for secrets. |
 | **Dependencies** | **Zero** third-party packages. |
 
@@ -52,14 +56,16 @@
 ## Contents
 1. [Getting started](#getting-started)
 2. [Architecture](#architecture)
-3. [Swift concurrency](#swift-concurrency)
-4. [Performance](#performance) — launch, scrolling, images, memory
-5. [Debugging performance: tools & playbooks](#debugging-performance-tools--playbooks)
-6. [Testing strategy](#testing-strategy)
-7. [Accessibility, privacy & App Store readiness](#accessibility-privacy--app-store-readiness)
-8. [Bugs the process caught](#bugs-the-process-caught)
-9. [Project structure & tooling](#project-structure--tooling)
-10. [Trade-offs & next steps](#trade-offs--next-steps)
+3. [Backend: Supabase & security](#backend-supabase--security)
+4. [Offline-first cart & sync](#offline-first-cart--sync) — network monitoring, error handling
+5. [Swift concurrency](#swift-concurrency)
+6. [Performance](#performance) — launch, scrolling, images, memory
+7. [Debugging performance: tools & playbooks](#debugging-performance-tools--playbooks)
+8. [Testing strategy](#testing-strategy)
+9. [Accessibility, privacy & App Store readiness](#accessibility-privacy--app-store-readiness)
+10. [Bugs the process caught](#bugs-the-process-caught)
+11. [Project structure & tooling](#project-structure--tooling)
+12. [Trade-offs & next steps](#trade-offs--next-steps)
 
 ---
 
@@ -176,6 +182,86 @@ Features call `router.push(.product(id, preview: product))` and never construct 
 Because navigation is plain state it is unit-tested: per-tab stacks, re-tap-to-pop-to-root, deep links,
 and **auth gating** — pushing `.checkout` as a guest presents sign-in and *resumes* checkout afterwards,
 instead of dumping the user back at the cart.
+
+---
+
+## Backend: Supabase & security
+
+The app talks to **Supabase** (free tier: Postgres, Auth, auto-generated REST, Row Level Security)
+through the same `APIClient` as everything else — **no Supabase SDK**. Features depend on `Domain`
+protocols; the Supabase adapters live in one folder (`Data/Supabase`). Swapping the backend for
+Spring Boot or Firebase means rewriting that folder, not the app. ([ADR 0006](docs/adr/0006-supabase-backend.md))
+
+```
+SwiftUI ─► ViewModel ─► Store / Repository protocol (Domain)
+                             │
+          ┌──────────────────┴──────────────────┐
+   LocalFirstRepository (disk)          Supabase adapters (Data/Supabase)
+                                                  │  APIClient + SupabaseAuthorizer
+                                                  ▼
+                        PostgREST /rest/v1  ·  GoTrue /auth/v1  ·  RPC functions
+                                                  ▼
+                              Postgres + Row Level Security (auth.uid())
+```
+
+| Concern | How |
+|---|---|
+| **Who can see what** | Every user table has RLS `user_id = (select auth.uid())` (the sub-select is evaluated once per statement, not per row). Catalog is public read-only. Coupons have *no* policy — invisible to clients. |
+| **Keys** | Only the *publishable* key ships (git-ignored `Config/Supabase.local.xcconfig`). The secret/service key never leaves the server. |
+| **Checkout** | `place_order()` — one `SECURITY DEFINER` transaction: lock product rows in a stable order (no deadlocks) → validate stock → **price from the database** (client can't tamper) → apply coupon → insert order + snapshot lines → decrement stock → clear cart. |
+| **Double-charge safety** | Each checkout attempt carries an **idempotency key**; a retry after a timeout returns the *first* order. That's what makes the checkout `POST` safe to retry automatically. |
+| **Auth** | GoTrue REST; tokens in the **Keychain**; proactive refresh 60 s before expiry; **single-flight** refresh on 401 (8 concurrent 401s → 1 refresh — tested); revoked refresh token → session ends, user is asked to sign in. |
+| **Account deletion** | `delete_my_account()` RPC (App Review 5.1.1(v)) — no admin key in the client. |
+| **No backend?** | Without the xcconfig the app runs on bundled fixtures through the same pipeline — clone-and-run for reviewers, deterministic UI tests. |
+
+Setup takes ~5 minutes on the free tier — see [`supabase/README.md`](supabase/README.md).
+
+---
+
+## Offline-first cart & sync
+
+The **cart and wishlist are local-first**: every change is written to the device immediately and
+synced later. The catalog is cached for offline browsing; **checkout, payment and orders are
+online-only by design** ("You're offline. Connect to complete checkout." — your bag is saved).
+([ADR 0005](docs/adr/0005-offline-first-cart-sync.md))
+
+```
+tap ─► SyncedList (@MainActor)          instant UI, optimistic
+          │ SerialTaskQueue             ordered disk writes
+          ▼
+       SyncedCollection (actor, disk)   per-record state: synced · pendingUpsert · pendingDelete (+version)
+          │ sync()  ◄── SyncCoordinator ◄── launch · foreground · network restored · sign-in
+          ▼                                  debounced change (600 ms) · Background App Refresh
+       push upserts ─► push deletes ─► pull server ─► reconcile
+```
+
+**Why state-based sync, not an operation log:** ten quantity taps while offline become **one**
+upsert of the final value; upserts are absolute, so a retried request is harmless; a delete of a
+never-synced line needs no request at all.
+
+**Reconciliation:** records the user hasn't touched follow the server (changes and deletions from
+other devices flow in); records with pending local edits keep the local value until it's uploaded;
+a push only marks a record synced if it wasn't edited *during* the request (version check —
+there's a test that pauses the server mid-upsert and edits the cart to prove it).
+
+**Error handling — every failure has a deliberate response:**
+
+| Failure | Response |
+|---|---|
+| Offline / DNS / connection lost | Keep changes pending, show *"Saved on this device · will sync when you're online"*; **no polling** — `NWPathMonitor` triggers a sync the moment connectivity returns |
+| Timeout · 5xx · 429 | Idempotent requests retried with exponential backoff (300 ms…); sync passes retry at 2 → 4 → 8 … 60 s |
+| 401 | Refresh the token once (single-flight) and replay the request; if the refresh token is revoked → sign-in prompt |
+| 4xx rejection (e.g. discontinued product) | **Don't retry blindly**: isolate the offending record, drop it locally, tell the user *"… is no longer available and was removed from your bag."* |
+| Checkout: out of stock / declined / coupon | Typed errors from the server transaction → clear copy; the cart re-syncs to show what's actually available |
+| Checkout while offline | Refused up front — never a half-placed order |
+
+**Network monitoring caveat:** a satisfied `NWPath` means a route exists, not that *our server* is
+reachable (captive portal, DNS, outage). The monitor is used as a hint for UX and instant recovery;
+correctness always comes from the actual request outcome.
+
+**See it:** Settings → *Data & Sync* shows the backend, connection and bag sync state, has
+**Sync Now**, and (Debug builds) **Simulate Offline** — which makes the transport fail exactly like
+airplane mode, so offline behaviour can be demoed without touching the device settings.
 
 ---
 
@@ -328,12 +414,12 @@ xcrun xctrace record --template 'App Launch' --launch -- /path/to/NovaShop.app
         │ View-model tests  │   Home, Search (debounce/cancel), Listing, Product, Checkout,
         │                   │   forms (card, coupon, sign-in/up) — no views rendered
       ┌─┴───────────────────┴─┐
-      │ Domain / data / infra │   filtering, pricing, validation, stores, API client retries,
-      │    (the bulk)         │   DTO contract, single-flight cache, persistence, deep links
+      │ Domain / data / infra │   filtering, pricing, validation, local-first sync & reconciliation,
+      │    (the bulk)         │   token refresh, error mapping, DTO contract, persistence, deep links
       └───────────────────────┘
 ```
 
-- **79 unit tests** in 6 targets with **swift-testing** (`@Test`, `#expect`, parameterized tables,
+- **115 unit tests** in 6 targets with **swift-testing** (`@Test`, `#expect`, parameterized tables,
   `#require`), all green in ~0.1 s of test time.
 - Hand-written fakes in `TestSupport` (`FakeCatalogRepository`, `InMemoryPersistence`, `ImmediateClock`…) —
   they behave like the real adapters, so tests read as behaviour, not mock choreography.
@@ -432,8 +518,9 @@ NovaShop/
 
 Deliberate choices, stated plainly:
 
-- **Backend.** A fixture API stands in for a server; auth, orders and coupons are local adapters that
-  implement the full contract. Swapping in real services touches only `AppContainer`.
+- **Backend.** Supabase free tier when configured, bundled fixtures otherwise — both behind the same
+  protocols. Realtime subscriptions (live cart updates across devices without a refresh) are the
+  next step; today other devices' changes arrive on the next sync trigger.
 - **Payments.** The Apple Pay / PayPal / card UI is complete, but no PSP is integrated. Next: PassKit
   `PKPaymentAuthorizationController` + a provider SDK for tokenisation.
 - **Sign in with Apple/Google** buttons call a local adapter; production would use

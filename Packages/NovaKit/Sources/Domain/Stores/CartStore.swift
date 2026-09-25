@@ -2,31 +2,51 @@ import Foundation
 import NovaCore
 import Observation
 
-/// App-wide cart state. Injected into the SwiftUI environment once; every screen that shows a bag
-/// badge, a cart line or a total reads the same instance, so there is exactly one source of truth.
+/// App-wide cart state, local-first.
+///
+/// Every change is applied instantly and persisted on device; `SyncedList` then reconciles it with
+/// the server when the user is signed in and online. Offline edits coalesce and upload later; the
+/// server remains the source of truth for everything already synced.
 ///
 /// Observation (`@Observable`) tracks property access per view, so the tab badge re-renders when
-/// `items` changes but the product grid (which never reads `items`) does not.
+/// the lines change but the product grid (which never reads them) does not.
 @MainActor
 @Observable
 public final class CartStore {
-    public private(set) var items: [CartItem] = []
     public private(set) var coupon: Coupon?
-    public private(set) var isHydrated = false
 
-    @ObservationIgnored private let saveQueue: SaveQueue<[CartItem]>
-    @ObservationIgnored private let persistence: any Persisting<[CartItem]>
+    @ObservationIgnored public let list: SyncedList<CartItem>
     @ObservationIgnored private let couponService: any CouponService
 
     public static let maxQuantityPerLine = 10
 
-    public init(persistence: any Persisting<[CartItem]>, couponService: any CouponService) {
-        self.persistence = persistence
+    public init(
+        repository: any LocalFirstRepository<CartItem>,
+        couponService: any CouponService,
+        debounce: Duration = .milliseconds(600),
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
+        list = SyncedList(repository: repository, debounce: debounce, clock: clock)
         self.couponService = couponService
-        saveQueue = SaveQueue(store: persistence)
     }
 
     // MARK: Derived
+
+    public var items: [CartItem] {
+        list.records
+    }
+
+    public var pendingItemIDs: Set<CartItem.ID> {
+        list.pendingIDs
+    }
+
+    public var syncStatus: SyncStatus {
+        list.status
+    }
+
+    public var isHydrated: Bool {
+        list.isHydrated
+    }
 
     public var itemCount: Int {
         items.reduce(0) { $0 + $1.quantity }
@@ -36,56 +56,88 @@ public final class CartStore {
         items.isEmpty
     }
 
+    /// One-line explanation after the server refused lines (e.g. a product was discontinued).
+    public var rejectionNotice: String? {
+        let names = list.rejected.map(\.product.name)
+        guard !names.isEmpty else { return nil }
+        let verb = names.count == 1 ? "is" : "are"
+        return "\(ListFormatter.localizedString(byJoining: names)) \(verb) no longer available and was removed from your bag."
+    }
+
     public func breakdown(shipping: ShippingOption?) -> PriceBreakdown {
         PricingCalculator.breakdown(items: items, coupon: coupon, shipping: shipping)
     }
 
     // MARK: Lifecycle
 
-    /// Loads the persisted cart *after* first frame. Anything added before hydration completes is
-    /// merged on top instead of being clobbered by the disk snapshot.
+    /// Loads the on-device cart *after* first frame (never blocks launch).
     public func hydrate() async {
-        guard !isHydrated else { return }
-        let stored = await persistence.load() ?? []
-        let addedBeforeHydration = items
-        items = stored
-        for line in addedBeforeHydration {
-            merge(line)
-        }
-        isHydrated = true
-        if !addedBeforeHydration.isEmpty {
-            persist()
-        }
+        await list.hydrate()
     }
 
-    // MARK: Mutations
+    public func sync() async {
+        await list.sync()
+    }
+
+    // MARK: Mutations (instant, persisted, synced later)
 
     public func add(_ product: Product, color: ProductColor?, size: Size?, quantity: Int = 1) {
-        merge(CartItem(product: product, color: color, size: size, quantity: quantity))
-        persist()
+        var line = CartItem(product: product, color: color, size: size, quantity: quantity)
+        if let existing = items.first(where: { $0.id == line.id }) {
+            line.quantity = min(existing.quantity + quantity, Self.maxQuantityPerLine)
+        }
+        list.save(line)
     }
 
     public func setQuantity(_ quantity: Int, for itemID: CartItem.ID) {
-        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        guard var line = items.first(where: { $0.id == itemID }) else { return }
         if quantity <= 0 {
-            items.remove(at: index)
+            list.remove(itemID)
         } else {
-            items[index].quantity = min(quantity, Self.maxQuantityPerLine)
+            line.quantity = min(quantity, Self.maxQuantityPerLine)
+            list.save(line)
         }
         revalidateCoupon()
-        persist()
     }
 
     public func remove(_ itemID: CartItem.ID) {
-        items.removeAll { $0.id == itemID }
+        list.remove(itemID)
         revalidateCoupon()
-        persist()
     }
 
-    public func clear() {
-        items = []
+    /// After a successful order: the server already emptied its cart inside the checkout
+    /// transaction; mirror that locally for the lines that were ordered (lines added meanwhile stay).
+    public func completeOrder(_ ordered: [CartItem]) {
+        for line in ordered {
+            list.remove(line.id)
+        }
         coupon = nil
-        persist()
+    }
+
+    /// Sign-out.
+    public func removeAllLocally() async {
+        coupon = nil
+        await list.removeAllLocally()
+    }
+
+    /// Sign-in: guest lines are merged into the account's cart on the next sync.
+    public func prepareForMerge() async {
+        await list.prepareForMerge()
+    }
+
+    /// Checkout needs the server to hold exactly what the user sees (it prices the *server* cart).
+    public func syncForCheckout() async throws {
+        await list.sync()
+        switch list.status {
+        case .waitingForNetwork:
+            throw CheckoutError.offline
+        case .failed:
+            throw CheckoutError.cartNotSynced
+        default:
+            if !list.pendingIDs.isEmpty, list.syncGate() == nil {
+                throw CheckoutError.cartNotSynced
+            }
+        }
     }
 
     @discardableResult
@@ -100,28 +152,20 @@ public final class CartStore {
         coupon = nil
     }
 
+    public func dismissRejectionNotice() {
+        list.clearRejected()
+    }
+
     /// Test / lifecycle hook: wait for pending disk writes.
     public func flush() async {
-        await saveQueue.flush()
+        await list.flushWrites()
     }
 
     // MARK: Private
-
-    private func merge(_ line: CartItem) {
-        if let index = items.firstIndex(where: { $0.id == line.id }) {
-            items[index].quantity = min(items[index].quantity + line.quantity, Self.maxQuantityPerLine)
-        } else {
-            items.append(line)
-        }
-    }
 
     private func revalidateCoupon() {
         if let coupon, breakdown(shipping: nil).subtotal < coupon.minimumSubtotal || items.isEmpty {
             self.coupon = nil
         }
-    }
-
-    private func persist() {
-        saveQueue.enqueue(items)
     }
 }

@@ -31,6 +31,7 @@
 		9E6CA30F132C4FF2C648C197 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A166DFCA7194B3C9ECE777F3 /* NovaShopUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaShopUITests.swift; sourceTree = "<group>"; };
 		A2AABE9AE5C93D71D45CEE43 /* NovaShop.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NovaShop.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB6FBA3F99F8B27C4B14186E /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		CE7666EB03102B712AD670C5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D4CAC64600A8D410D6EE5429 /* ScreenshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotTests.swift; sourceTree = "<group>"; };
 		DF7D64AA3BB289456B80FE5D /* NovaShopUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = NovaShopUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -66,6 +67,14 @@
 			path = UITests;
 			sourceTree = "<group>";
 		};
+		31B95504F4E556B6C5DB0FF6 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				AB6FBA3F99F8B27C4B14186E /* Base.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 		3A65D5FD166A36E7FF0AE7F6 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
@@ -79,6 +88,7 @@
 			isa = PBXGroup;
 			children = (
 				12F8D423304FDE6C8C99DDFF /* App */,
+				31B95504F4E556B6C5DB0FF6 /* Config */,
 				66A4F12589FAA493A15AF8E0 /* Packages */,
 				235BDE59A2D7A6E61E94EB28 /* UITests */,
 				F70520495A459F8A2AC58B58 /* Products */,
@@ -386,6 +396,7 @@
 		};
 		6E1ABE245BBD55819F4F9F41 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AB6FBA3F99F8B27C4B14186E /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -421,6 +432,7 @@
 		};
 		AFA2BC4B09C47DE8657FEB60 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AB6FBA3F99F8B27C4B14186E /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;

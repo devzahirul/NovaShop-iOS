@@ -147,7 +147,14 @@ public actor FakeOrderService: OrderService {
         self.shouldDecline = shouldDecline
     }
 
+    public func setDecline(_ decline: Bool) {
+        shouldDecline = decline
+    }
+
+    public private(set) var attemptedKeys: [UUID] = []
+
     public func placeOrder(_ draft: OrderDraft) async throws -> Order {
+        attemptedKeys.append(draft.idempotencyKey)
         if shouldDecline {
             throw PaymentError.declined
         }
@@ -198,6 +205,10 @@ public actor FakeProfileRepository: ProfileRepository {
 }
 
 public actor FakeAuthService: AuthService {
+    public nonisolated var supportsSocialSignIn: Bool {
+        true
+    }
+
     public var user: User?
     public init(user: User? = nil) {
         self.user = user
@@ -240,6 +251,92 @@ public actor FakeAuthService: AuthService {
 
     public func deleteAccount() async throws {
         user = nil
+    }
+}
+
+// MARK: - Local-first
+
+/// In-memory `LocalFirstRepository` with a simulated server. Faithful to the contract: local edits
+/// are pending until `sync()`, which pushes them (honouring `rejectIDs`), then adopts the server state.
+public actor FakeLocalFirstRepository<Record: Identifiable & Sendable>: LocalFirstRepository where Record.ID: Sendable {
+    public private(set) var local: [Record]
+    public private(set) var pending: Set<Record.ID> = []
+    public private(set) var server: [Record]
+    public private(set) var syncCount = 0
+    private var syncError: (any Error)?
+    private var rejectIDs: Set<Record.ID> = []
+
+    public init(local: [Record] = [], server: [Record] = []) {
+        self.local = local
+        self.server = server
+    }
+
+    public func failSync(with error: (any Error)?) {
+        syncError = error
+    }
+
+    public func reject(_ ids: Set<Record.ID>) {
+        rejectIDs = ids
+    }
+
+    public func setServer(_ records: [Record]) {
+        server = records
+    }
+
+    public func records() async -> [Record] {
+        local
+    }
+
+    public func pendingIDs() async -> Set<Record.ID> {
+        pending
+    }
+
+    public func save(_ record: Record) async {
+        if let index = local.firstIndex(where: { $0.id == record.id }) {
+            local[index] = record
+        } else {
+            local.append(record)
+        }
+        pending.insert(record.id)
+    }
+
+    public func remove(_ id: Record.ID) async {
+        local.removeAll { $0.id == id }
+        pending.insert(id)
+    }
+
+    public func removeAllLocally() async {
+        local = []
+        pending = []
+    }
+
+    public func prepareForMerge() async {
+        pending.formUnion(local.map(\.id))
+    }
+
+    public func sync() async throws -> SyncReport<Record> {
+        syncCount += 1
+        if let syncError {
+            throw syncError
+        }
+        var rejected: [Record] = []
+        for id in pending {
+            if let record = local.first(where: { $0.id == id }) {
+                if rejectIDs.contains(id) {
+                    rejected.append(record)
+                    local.removeAll { $0.id == id }
+                } else if let index = server.firstIndex(where: { $0.id == id }) {
+                    server[index] = record
+                } else {
+                    server.append(record)
+                }
+            } else {
+                server.removeAll { $0.id == id }
+            }
+        }
+        pending = []
+        local = server
+        return SyncReport(records: local, rejected: rejected)
     }
 }
 

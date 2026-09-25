@@ -64,7 +64,10 @@ extension AppContainer {
             CouponView(viewModel: CouponViewModel(cart: self.cart))
         case .checkout:
             CheckoutView(
-                viewModel: CheckoutViewModel(cart: self.cart, profile: self.profile, orders: self.orders),
+                viewModel: CheckoutViewModel(
+                    cart: self.cart, profile: self.profile, orders: self.orders,
+                    isOnline: { [network = self.network] in network.isOnline }
+                ),
                 addCardViewModel: self.addCardViewModel
             )
         case let .orderConfirmation(order):
@@ -86,7 +89,7 @@ extension AppContainer {
         case .notifications:
             NotificationsView(viewModel: NotificationsViewModel(repository: self.notifications))
         case .settings:
-            SettingsView()
+            SettingsView(backend: self.backendDescription)
         }
     }
 }

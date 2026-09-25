@@ -4,7 +4,7 @@ import Foundation
 // Wire models. Kept separate from Domain so API changes (renamed keys, cents vs. decimals,
 // nullable fields) are absorbed here and never ripple into features.
 
-struct CatalogDTO: Decodable, Sendable {
+public struct CatalogDTO: Decodable, Sendable {
     let categories: [CategoryDTO]
     let products: [ProductDTO]
     let collections: [CollectionDTO]
@@ -93,7 +93,7 @@ struct CollectionDTO: Decodable, Sendable {
     }
 }
 
-struct ReviewPageDTO: Decodable, Sendable {
+public struct ReviewPageDTO: Decodable, Sendable {
     struct SummaryDTO: Decodable, Sendable {
         let average: Double
         let total: Int

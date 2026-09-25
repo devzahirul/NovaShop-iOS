@@ -267,13 +267,20 @@ public struct OrderDraft: Sendable, Equatable {
     public let payment: PaymentMethod
     public let shipping: ShippingOption
     public let coupon: Coupon?
+    /// Generated once per checkout attempt and reused on retries, so a request that timed out
+    /// *after* the server committed can be resent without creating a second order.
+    public let idempotencyKey: UUID
 
-    public init(items: [CartItem], address: Address, payment: PaymentMethod, shipping: ShippingOption, coupon: Coupon?) {
+    public init(
+        items: [CartItem], address: Address, payment: PaymentMethod, shipping: ShippingOption, coupon: Coupon?,
+        idempotencyKey: UUID = UUID()
+    ) {
         self.items = items
         self.address = address
         self.payment = payment
         self.shipping = shipping
         self.coupon = coupon
+        self.idempotencyKey = idempotencyKey
     }
 }
 

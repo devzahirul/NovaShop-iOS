@@ -43,9 +43,16 @@ targets:
     dependencies:
       - package: NovaKit
         product: AppFeature
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
     info:
       path: App/Info.plist
       properties:
+        NovaShopSupabaseHost: $(SUPABASE_HOST)
+        NovaShopSupabasePublishableKey: $(SUPABASE_PUBLISHABLE_KEY)
+        BGTaskSchedulerPermittedIdentifiers: [com.novashop.app.sync]
+        UIBackgroundModes: [fetch]
         CFBundleDisplayName: NovaShop
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)

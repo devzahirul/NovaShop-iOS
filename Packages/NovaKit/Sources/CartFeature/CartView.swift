@@ -26,6 +26,16 @@ public struct CartView: View {
                 }
             } else {
                 List {
+                    Section {
+                        SyncStatusRow(status: cart.syncStatus, pendingCount: cart.pendingItemIDs.count)
+                        if let notice = cart.rejectionNotice {
+                            InlineBanner(notice, style: .info)
+                                .onTapGesture { cart.dismissRejectionNotice() }
+                                .accessibilityHint("Double tap to dismiss")
+                        }
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                     ForEach(cart.items) { item in
                         CartLineView(item: item)
                             .listRowBackground(Color.clear)
@@ -47,6 +57,7 @@ public struct CartView: View {
         .novaScreenBackground()
         .navigationTitle(cart.itemCount > 0 ? "My Cart (\(cart.itemCount))" : "My Cart")
         .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await cart.sync() }
     }
 
     private var couponRow: some View {
@@ -113,6 +124,13 @@ struct CartLineView: View {
                     .accessibilityLabel("Remove \(item.product.name)")
                 }
                 Text(item.variantDescription).font(NovaFont.caption).foregroundStyle(NovaColor.textSecondary)
+                if cart.pendingItemIDs.contains(item.id), cart.syncStatus != .localOnly {
+                    Label("Not synced yet", systemImage: "icloud.and.arrow.up")
+                        .font(NovaFont.caption)
+                        .foregroundStyle(NovaColor.textTertiary)
+                        .transition(.opacity)
+                        .accessibilityIdentifier("cart.line.pending")
+                }
                 Spacer(minLength: Spacing.sm)
                 HStack {
                     Text(Money.format(item.lineTotal)).font(NovaFont.price).foregroundStyle(NovaColor.textPrimary)
@@ -128,6 +146,52 @@ struct CartLineView: View {
         .padding(.vertical, Spacing.sm)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("cart.line.\(item.product.id.rawValue)")
+    }
+}
+
+/// One quiet line under the title: where the bag lives and whether it's up to date.
+struct SyncStatusRow: View {
+    let status: SyncStatus
+    let pendingCount: Int
+
+    var body: some View {
+        HStack(spacing: Spacing.sm) {
+            icon
+            Text(text)
+                .font(NovaFont.caption)
+                .foregroundStyle(NovaColor.textSecondary)
+            Spacer()
+        }
+        .animation(.snappy, value: status)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("cart.syncStatus")
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        switch status {
+        case .syncing:
+            ProgressView().controlSize(.mini)
+        case .synced, .idle:
+            Image(systemName: "checkmark.icloud").foregroundStyle(NovaColor.success)
+        case .waitingForNetwork:
+            Image(systemName: "icloud.slash").foregroundStyle(NovaColor.textTertiary)
+        case .failed:
+            Image(systemName: "exclamationmark.icloud").foregroundStyle(NovaColor.error)
+        case .localOnly:
+            Image(systemName: "iphone").foregroundStyle(NovaColor.textTertiary)
+        }
+    }
+
+    private var text: String {
+        switch status {
+        case .syncing: "Syncing your bag…"
+        case let .synced(date): "Synced \(date.formatted(.relative(presentation: .named)))"
+        case .idle: "Your bag is up to date"
+        case .waitingForNetwork: pendingCount > 0 ? "Saved on this device · will sync when you're online" : "You're offline"
+        case .failed: "Couldn't sync right now · we'll retry automatically"
+        case .localOnly: "Saved on this device · sign in to sync across devices"
+        }
     }
 }
 

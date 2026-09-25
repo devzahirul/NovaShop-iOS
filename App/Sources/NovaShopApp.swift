@@ -18,5 +18,9 @@ struct NovaShopApp: App {
         WindowGroup {
             RootView(container: container)
         }
+        // Background App Refresh: upload local-first changes made before the app was closed.
+        .backgroundTask(.appRefresh(BackgroundSync.taskIdentifier)) { [container] in
+            await container.backgroundSync()
+        }
     }
 }

@@ -16,6 +16,8 @@ public protocol CatalogRepository: Sendable {
 }
 
 public protocol AuthService: Sendable {
+    /// Whether Sign in with Apple / Google are configured for this backend (hidden in the UI otherwise).
+    var supportsSocialSignIn: Bool { get }
     func restoreSession() async -> User?
     func signIn(email: String, password: String) async throws -> User
     func signUp(name: String, email: String, password: String) async throws -> User
@@ -32,6 +34,13 @@ public enum SocialProvider: String, Sendable {
 public enum AuthError: Error, Equatable, Sendable, UserFacingConvertible {
     case invalidCredentials
     case emailAlreadyInUse
+    /// Sign-up succeeded but the backend requires email confirmation before a session is issued.
+    case confirmationRequired(email: String)
+    case emailNotConfirmed
+    case weakPassword(String)
+    case rateLimited
+    case sessionExpired
+    case unsupportedProvider
     case cancelled
     case network
 
@@ -45,6 +54,22 @@ public enum AuthError: Error, Equatable, Sendable, UserFacingConvertible {
                 message: "An account with this email already exists. Try signing in.",
                 isRetryable: false
             )
+        case let .confirmationRequired(email):
+            UserFacingError(
+                title: "Check your inbox",
+                message: "We sent a confirmation link to \(email). Confirm it, then sign in.",
+                isRetryable: false
+            )
+        case .emailNotConfirmed:
+            UserFacingError(title: "Confirm your email", message: "Open the link we emailed you, then sign in.", isRetryable: false)
+        case let .weakPassword(reason):
+            UserFacingError(title: "Choose a stronger password", message: reason, isRetryable: false)
+        case .rateLimited:
+            UserFacingError(title: "Too many attempts", message: "Please wait a minute and try again.")
+        case .sessionExpired:
+            UserFacingError(title: "Session expired", message: "Please sign in again to continue.", isRetryable: false)
+        case .unsupportedProvider:
+            UserFacingError(title: "Not available", message: "This sign-in option isn't available yet.", isRetryable: false)
         case .cancelled:
             UserFacingError(title: "Cancelled", message: "Sign in was cancelled.", isRetryable: false)
         case .network:
@@ -88,11 +113,43 @@ public enum PaymentError: Error, Equatable, Sendable, UserFacingConvertible {
     }
 }
 
+/// Checkout failures the server reports (it owns pricing, stock and the cart at order time).
+public enum CheckoutError: Error, Equatable, Sendable, UserFacingConvertible {
+    case offline
+    case cartNotSynced
+    case cartEmpty
+    case outOfStock(products: String)
+    case addressNotFound
+
+    public var userFacing: UserFacingError {
+        switch self {
+        case .offline:
+            UserFacingError(title: "You're offline", message: "Connect to the internet to complete checkout. Your bag is saved.")
+        case .cartNotSynced:
+            UserFacingError(
+                title: "Couldn't update your bag",
+                message: "We couldn't sync your bag with our servers. Please try again."
+            )
+        case .cartEmpty:
+            UserFacingError(title: "Your bag is empty", message: "Add something to your bag to check out.", isRetryable: false)
+        case let .outOfStock(products):
+            UserFacingError(
+                title: "Not enough stock",
+                message: "\(products) \(products.contains(",") ? "are" : "is") no longer available in that quantity. "
+                    + "Your bag has been updated.",
+                isRetryable: false
+            )
+        case .addressNotFound:
+            UserFacingError(title: "Address unavailable", message: "Please choose your shipping address again.", isRetryable: false)
+        }
+    }
+}
+
 public protocol ProfileRepository: Sendable {
-    func addresses() async -> [Address]
+    func addresses() async throws -> [Address]
     func save(_ address: Address) async throws -> [Address]
     func deleteAddress(id: Address.ID) async throws -> [Address]
-    func paymentMethods() async -> [PaymentMethod]
+    func paymentMethods() async throws -> [PaymentMethod]
     func save(_ method: PaymentMethod) async throws -> [PaymentMethod]
 }
 

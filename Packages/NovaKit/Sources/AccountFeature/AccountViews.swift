@@ -136,8 +136,13 @@ public struct SettingsView: View {
     @Environment(\.openURL) private var openURL
     @State private var isConfirmingDelete = false
     @State private var deleteError: UserFacingError?
+    @Environment(NetworkMonitor.self) private var network
+    @Environment(CartStore.self) private var cart
+    private let backend: String
 
-    public init() {}
+    public init(backend: String = "Offline demo data") {
+        self.backend = backend
+    }
 
     public var body: some View {
         Form {
@@ -164,6 +169,24 @@ public struct SettingsView: View {
                     ForEach(AppearancePreference.allCases) { Text($0.title).tag($0) }
                 }
                 .accessibilityIdentifier("settings.appearance")
+            }
+            Section {
+                LabeledContent("Backend", value: backend)
+                LabeledContent("Connection", value: network.isOnline ? "Online" : "Offline")
+                LabeledContent("Bag", value: syncDescription)
+                Button("Sync Now") { Task { await cart.sync() } }
+                    .disabled(cart.syncStatus == .syncing || cart.syncStatus == .localOnly)
+                #if DEBUG
+                    Toggle("Simulate Offline", isOn: Binding(
+                        get: { network.isSimulatingOffline },
+                        set: { network.isSimulatingOffline = $0 }
+                    ))
+                    .accessibilityIdentifier("settings.simulateOffline")
+                #endif
+            } header: {
+                Text("Data & Sync")
+            } footer: {
+                Text("Your bag and wishlist work offline and sync automatically when you're back online.")
             }
             Section("Privacy") {
                 if let url = URL(string: "https://novashop.example/privacy") {
@@ -203,6 +226,19 @@ public struct SettingsView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(deleteError?.message ?? "")
+        }
+    }
+}
+
+private extension SettingsView {
+    var syncDescription: String {
+        switch cart.syncStatus {
+        case .localOnly: "On this device"
+        case .idle: "Up to date"
+        case .syncing: "Syncing…"
+        case let .synced(date): "Synced \(date.formatted(date: .omitted, time: .shortened))"
+        case .waitingForNetwork: "Waiting for connection"
+        case .failed: "Retrying"
         }
     }
 }

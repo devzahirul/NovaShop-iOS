@@ -36,6 +36,23 @@ public struct RootView: View {
         .environment(container.cart)
         .environment(container.wishlist)
         .environment(container.recentlyViewed)
+        .environment(container.network)
+        .overlay(alignment: .top) {
+            ConnectivityBanner(network: container.network, cart: container.cart)
+        }
+        .alert("Session expired", isPresented: Binding(
+            get: { container.session.expiredNotice },
+            set: {
+                if !$0 {
+                    container.session.dismissExpiredNotice()
+                }
+            }
+        )) {
+            Button("Sign In") { router.present(.auth(then: nil)) }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text("For your security you've been signed out. Your bag is saved on this device.")
+        }
         .sheet(item: $router.sheet) { sheet in
             switch sheet {
             case .auth:
@@ -54,9 +71,21 @@ public struct RootView: View {
             DeferredLaunchWork.schedule()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background {
-                // Make sure queued writes land before the process can be suspended.
-                Task { await container.cart.flush() }
+            switch phase {
+            case .active:
+                Task { await container.didBecomeActive() }
+            case .background:
+                // Land queued writes before suspension; if anything still needs uploading, ask iOS
+                // for a background refresh window to sync it.
+                Task {
+                    await container.cart.flush()
+                    await container.wishlist.flush()
+                    if container.hasPendingChanges, container.isBackendEnabled {
+                        BackgroundSync.schedule()
+                    }
+                }
+            default:
+                break
             }
         }
     }

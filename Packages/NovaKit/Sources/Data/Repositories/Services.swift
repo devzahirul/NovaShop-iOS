@@ -20,6 +20,10 @@ public actor LocalAuthService: AuthService {
     private let latency: Duration
     private let sessionKey = "session.user"
 
+    public nonisolated var supportsSocialSignIn: Bool {
+        true
+    }
+
     public init(secureStorage: any SecureStorage, accountsDirectory: URL? = nil, inMemory: Bool = false, latency: Duration) {
         self.secureStorage = secureStorage
         self.latency = latency

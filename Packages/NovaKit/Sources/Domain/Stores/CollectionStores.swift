@@ -2,58 +2,67 @@ import Foundation
 import NovaCore
 import Observation
 
-/// Saved items. Keeps an ordered array for display plus a `Set` index so the heart button on every
-/// product card answers `contains` in O(1) — it is evaluated for every visible cell on every scroll.
+/// Saved items, local-first and synced like the cart. Membership checks are O(1) (`SyncedList.ids`)
+/// because the heart on every visible product card asks on every scroll frame.
 @MainActor
 @Observable
 public final class WishlistStore {
-    public private(set) var products: [Product] = []
-    /// Observed too, so `contains` registers a dependency and hearts refresh on toggle.
-    private var index: Set<Product.ID> = []
-    @ObservationIgnored private let persistence: any Persisting<[Product]>
-    @ObservationIgnored private let saveQueue: SaveQueue<[Product]>
-    @ObservationIgnored private var isHydrated = false
+    @ObservationIgnored public let list: SyncedList<Product>
 
-    public init(persistence: any Persisting<[Product]>) {
-        self.persistence = persistence
-        saveQueue = SaveQueue(store: persistence)
+    public init(
+        repository: any LocalFirstRepository<Product>,
+        debounce: Duration = .milliseconds(600),
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
+        list = SyncedList(repository: repository, debounce: debounce, clock: clock)
+    }
+
+    public var products: [Product] {
+        list.records
     }
 
     public var count: Int {
-        products.count
+        list.records.count
+    }
+
+    public var syncStatus: SyncStatus {
+        list.status
     }
 
     public func contains(_ id: Product.ID) -> Bool {
-        index.contains(id)
+        list.ids.contains(id)
     }
 
     public func hydrate() async {
-        guard !isHydrated else { return }
-        isHydrated = true
-        let stored = await persistence.load() ?? []
-        let local = products
-        products = local + stored.filter { !index.contains($0.id) }
-        index = Set(products.map(\.id))
+        await list.hydrate()
+    }
+
+    public func sync() async {
+        await list.sync()
     }
 
     public func toggle(_ product: Product) {
-        if index.contains(product.id) {
-            remove(product.id)
+        if contains(product.id) {
+            list.remove(product.id)
         } else {
-            products.insert(product, at: 0)
-            index.insert(product.id)
-            saveQueue.enqueue(products)
+            list.save(product, insertAtFront: true)
         }
     }
 
     public func remove(_ id: Product.ID) {
-        products.removeAll { $0.id == id }
-        index.remove(id)
-        saveQueue.enqueue(products)
+        list.remove(id)
+    }
+
+    public func removeAllLocally() async {
+        await list.removeAllLocally()
+    }
+
+    public func prepareForMerge() async {
+        await list.prepareForMerge()
     }
 
     public func flush() async {
-        await saveQueue.flush()
+        await list.flushWrites()
     }
 }
 

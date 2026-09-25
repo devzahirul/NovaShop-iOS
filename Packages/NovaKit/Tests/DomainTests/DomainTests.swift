@@ -1,5 +1,6 @@
 @testable import Domain
 import Foundation
+import NovaCore
 import Testing
 import TestSupport
 
@@ -198,13 +199,17 @@ struct ValidationTests {
 // MARK: - Stores
 
 @MainActor
-@Suite("CartStore")
+@Suite("CartStore (local-first)")
 struct CartStoreTests {
-    let persistence = InMemoryPersistence<[CartItem]>()
     let dress = Product.fixture(id: "dress", price: 129)
 
-    func makeStore() -> CartStore {
-        CartStore(persistence: persistence, couponService: FakeCouponService())
+    func makeStore(_ repository: FakeLocalFirstRepository<CartItem> = FakeLocalFirstRepository()) -> CartStore {
+        CartStore(repository: repository, couponService: FakeCouponService(), clock: ImmediateClock())
+    }
+
+    /// Lets a store sync (signed in, online, backend on).
+    func allowSync(_ store: CartStore) {
+        store.list.syncGate = { nil }
     }
 
     @Test("Adding the same variant merges lines; different sizes stay separate")
@@ -228,25 +233,103 @@ struct CartStoreTests {
         #expect(store.isEmpty)
     }
 
-    @Test("Writes are persisted in order (last write wins)")
-    func persistsInOrder() async {
-        let store = makeStore()
+    @Test("Mutations are instant in the UI and land on the repository in order")
+    func optimisticAndOrdered() async {
+        let repository = FakeLocalFirstRepository<CartItem>()
+        let store = makeStore(repository)
         for _ in 0 ..< 5 {
             store.add(dress, color: nil, size: .medium)
         }
-        store.clear()
+        #expect(store.items.first?.quantity == 5, "UI updated synchronously, before any I/O")
+        store.setQuantity(2, for: store.items[0].id)
         await store.flush()
-        #expect(await persistence.value == [])
-        #expect(await persistence.saveCount == 6)
+        #expect(await repository.local.first?.quantity == 2, "Last write wins on disk too")
+        #expect(store.pendingItemIDs.count == 1)
     }
 
-    @Test("Hydration merges items added before the disk load finished")
-    func hydrationMerge() async {
-        let stored = InMemoryPersistence<[CartItem]>([CartItem(product: .fixture(id: "old"), color: nil, size: .small)])
-        let store = CartStore(persistence: stored, couponService: FakeCouponService())
-        store.add(dress, color: nil, size: .medium) // user was fast
-        await store.hydrate()
-        #expect(Set(store.items.map(\.product.id.rawValue)) == ["old", "dress"])
+    @Test("Signed out: nothing syncs and the bag says it's on this device")
+    func localOnly() async {
+        let repository = FakeLocalFirstRepository<CartItem>()
+        let store = makeStore(repository)
+        store.add(dress, color: nil, size: .medium)
+        await store.sync()
+        #expect(store.syncStatus == .localOnly)
+        #expect(await repository.syncCount == 0)
+    }
+
+    @Test("Offline with changes: waits for the network instead of failing")
+    func offlineWaits() async {
+        let repository = FakeLocalFirstRepository<CartItem>()
+        let store = makeStore(repository)
+        store.list.syncGate = { .waitingForNetwork }
+        store.add(dress, color: nil, size: .medium)
+        await store.sync()
+        #expect(store.syncStatus == .waitingForNetwork)
+        #expect(await repository.syncCount == 0)
+        #expect(!store.pendingItemIDs.isEmpty)
+    }
+
+    @Test("Online: syncs, clears pending state and adopts the server's view")
+    func syncsOnline() async {
+        let fromOtherDevice = CartItem(product: .fixture(id: "coat", price: 200), color: nil, size: .small)
+        let repository = FakeLocalFirstRepository<CartItem>(server: [fromOtherDevice])
+        let store = makeStore(repository)
+        allowSync(store)
+        store.add(dress, color: nil, size: .medium)
+        await store.sync()
+
+        if case .synced = store.syncStatus {} else {
+            Issue.record("Expected synced, got \(store.syncStatus)")
+        }
+        #expect(store.pendingItemIDs.isEmpty)
+        #expect(Set(store.items.map(\.product.id.rawValue)) == ["coat", "dress"], "Server-side lines merged in")
+    }
+
+    @Test("Transient failure keeps changes pending and reports a retrying state")
+    func failureKeepsPending() async {
+        let repository = FakeLocalFirstRepository<CartItem>()
+        await repository.failSync(with: URLError(.badServerResponse))
+        let store = makeStore(repository)
+        allowSync(store)
+        store.add(dress, color: nil, size: .medium)
+        await store.sync()
+        if case .failed = store.syncStatus {} else {
+            Issue.record("Expected failed, got \(store.syncStatus)")
+        }
+        #expect(store.items.count == 1, "Nothing lost locally")
+        #expect(!store.pendingItemIDs.isEmpty)
+    }
+
+    @Test("Lines the server rejects are removed and explained once")
+    func rejection() async {
+        let repository = FakeLocalFirstRepository<CartItem>()
+        let store = makeStore(repository)
+        allowSync(store)
+        store.add(dress, color: nil, size: .medium)
+        await repository.reject([store.items[0].id])
+        await store.sync()
+        #expect(store.isEmpty)
+        #expect(store.rejectionNotice?.contains("Amelie Floral Midi Dress") == true)
+        store.dismissRejectionNotice()
+        #expect(store.rejectionNotice == nil)
+    }
+
+    @Test("Checkout sync: offline is a typed error, not a silent stale order")
+    func checkoutSync() async {
+        let store = makeStore()
+        store.list.syncGate = { .waitingForNetwork }
+        store.add(dress, color: nil, size: .medium)
+        await #expect(throws: CheckoutError.offline) { try await store.syncForCheckout() }
+    }
+
+    @Test("Sign-out wipes this account's local bag")
+    func signOutWipes() async {
+        let repository = FakeLocalFirstRepository<CartItem>()
+        let store = makeStore(repository)
+        store.add(dress, color: nil, size: .medium)
+        await store.removeAllLocally()
+        #expect(store.isEmpty)
+        #expect(await repository.local.isEmpty)
     }
 
     @Test("Coupon applies, and is dropped when the cart falls below its minimum")
@@ -272,17 +355,20 @@ struct CartStoreTests {
 @MainActor
 @Suite("Collection stores")
 struct CollectionStoreTests {
-    @Test("Wishlist toggles and answers contains in O(1)")
+    @Test("Wishlist toggles, answers contains in O(1), newest first")
     func wishlist() async {
-        let persistence = InMemoryPersistence<[Product]>()
-        let store = WishlistStore(persistence: persistence)
-        let product = Product.fixture()
-        store.toggle(product)
-        #expect(store.contains(product.id))
-        store.toggle(product)
-        #expect(!store.contains(product.id))
+        let repository = FakeLocalFirstRepository<Product>()
+        let store = WishlistStore(repository: repository, clock: ImmediateClock())
+        let first = Product.fixture(id: "a")
+        let second = Product.fixture(id: "b")
+        store.toggle(first)
+        store.toggle(second)
+        #expect(store.products.map(\.id.rawValue) == ["b", "a"])
+        #expect(store.contains(first.id))
+        store.toggle(first)
+        #expect(!store.contains(first.id))
         await store.flush()
-        #expect(await persistence.value == [])
+        #expect(await repository.local.map(\.id.rawValue) == ["b"])
     }
 
     @Test("Recently viewed is de-duplicated, most recent first and capped")
@@ -327,6 +413,22 @@ struct SessionStoreTests {
             try await store.signIn(email: "o@c.com", password: "wrong")
         }
         #expect(store.state == .signedOut)
+    }
+}
+
+@Suite("AppConfiguration")
+struct AppConfigurationTests {
+    @Test("Supabase turns on only with host + key, never under UI tests")
+    func backendSelection() {
+        let info: [String: Any] = [AppConfiguration.InfoKey.supabaseHost: "abc.supabase.co", AppConfiguration.InfoKey.supabaseKey: "pk"]
+        let live = AppConfiguration.resolve(arguments: [], environment: [:], info: info)
+        #expect(live.environment == .supabase)
+        #expect(live.apiBaseURL.absoluteString == "https://abc.supabase.co")
+
+        #expect(AppConfiguration.resolve(arguments: ["-ui-testing"], environment: [:], info: info).environment == .fixtures)
+        #expect(AppConfiguration.resolve(arguments: [], environment: [:], info: [:]).environment == .fixtures)
+        let missingKey: [String: Any] = [AppConfiguration.InfoKey.supabaseHost: "abc.supabase.co", AppConfiguration.InfoKey.supabaseKey: ""]
+        #expect(AppConfiguration.resolve(arguments: [], environment: [:], info: missingKey).environment == .fixtures)
     }
 }
 

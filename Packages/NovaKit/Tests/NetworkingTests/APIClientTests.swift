@@ -100,6 +100,33 @@ struct APIClientTests {
         #expect(transport.requestCount == 3)
     }
 
+    @Test("Offline is not retried in a tight loop (the sync layer waits for connectivity instead)")
+    func offlineNotRetried() async {
+        let transport = ScriptedTransport([.failure(APIError.offline), .status(200, Data("[]".utf8))])
+        await #expect(throws: APIError.offline) {
+            try await client(transport).send(Endpoint<[Item]>(path: "v1/items"))
+        }
+        #expect(transport.requestCount == 1)
+    }
+
+    @Test("A POST can opt in to retries when it carries an idempotency key")
+    func retrySafePost() async throws {
+        let transport = ScriptedTransport([.status(503), .status(200, Data(#"{"product_name":"Order"}"#.utf8))])
+        let endpoint = Endpoint<Item>(path: "rpc/place_order", method: .post, isRetrySafe: true)
+        #expect(try await client(transport).send(endpoint).productName == "Order")
+        #expect(transport.requestCount == 2)
+    }
+
+    @Test("Client rejections vs transient failures are classified correctly")
+    func classification() {
+        #expect(APIError.http(status: 422).isClientRejection)
+        #expect(!APIError.http(status: 401).isClientRejection)
+        #expect(!APIError.http(status: 429).isClientRejection)
+        #expect(APIError.http(status: 429).isTransient)
+        #expect(APIError.http(status: 503).isTransient)
+        #expect(!APIError.http(status: 404).isTransient)
+    }
+
     @Test("Query items and JSON bodies are encoded")
     func requestBuilding() throws {
         let endpoint = try Endpoint<EmptyResponse>.json(path: "v1/search", method: .post, body: ["query_text": "linen"])

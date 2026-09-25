@@ -10,3 +10,6 @@ Packages/NovaKit/.swiftpm/
 Packages/NovaKit/Package.resolved
 # macOS
 .DS_Store
+
+# Local Supabase credentials
+Config/Supabase.local.xcconfig

@@ -126,7 +126,7 @@ struct ProductDetailViewModelTests {
     }
 
     func makeCart() -> CartStore {
-        CartStore(persistence: InMemoryPersistence(), couponService: FakeCouponService())
+        CartStore(repository: FakeLocalFirstRepository(), couponService: FakeCouponService(), clock: ImmediateClock())
     }
 
     @Test("Adding without a size shows the inline error and adds nothing")
@@ -163,7 +163,7 @@ struct ProductDetailViewModelTests {
 @Suite("CheckoutViewModel")
 struct CheckoutViewModelTests {
     func makeCart() -> CartStore {
-        let cart = CartStore(persistence: InMemoryPersistence(), couponService: FakeCouponService())
+        let cart = CartStore(repository: FakeLocalFirstRepository(), couponService: FakeCouponService(), clock: ImmediateClock())
         cart.add(.fixture(price: 100), color: nil, size: .medium)
         return cart
     }
@@ -187,6 +187,38 @@ struct CheckoutViewModelTests {
         #expect(viewModel.placedOrder?.shipping == .express)
         #expect(cart.isEmpty)
         #expect(await orders.placed.count == 1)
+    }
+
+    @Test("Offline: checkout is refused up front with a clear, typed message")
+    func offlineCheckout() async {
+        let orders = FakeOrderService()
+        let viewModel = CheckoutViewModel(
+            cart: makeCart(), profile: FakeProfileRepository(addresses: [.fixture()]), orders: orders, isOnline: { false }
+        )
+        await viewModel.load()
+        viewModel.advance()
+        viewModel.advance()
+        #expect(viewModel.isOffline)
+        await viewModel.placeOrder()
+        #expect(viewModel.phase == .failed(CheckoutError.offline.userFacing))
+        #expect(await orders.attemptedKeys.isEmpty, "Never hits the server")
+    }
+
+    @Test("Retrying after a failure reuses the idempotency key; success rotates it")
+    func idempotencyKey() async throws {
+        let orders = FakeOrderService(shouldDecline: true)
+        let viewModel = CheckoutViewModel(cart: makeCart(), profile: FakeProfileRepository(addresses: [.fixture()]), orders: orders)
+        await viewModel.load()
+        viewModel.advance()
+        viewModel.advance()
+        await viewModel.placeOrder() // declined
+        viewModel.dismissError()
+        await orders.setDecline(false)
+        await viewModel.placeOrder() // retried → same key → server would dedupe
+        let keys = await orders.attemptedKeys
+        try #require(keys.count == 2)
+        #expect(keys[0] == keys[1])
+        #expect(viewModel.placedOrder != nil)
     }
 
     @Test("Cannot continue without an address")
@@ -323,7 +355,7 @@ struct FormTests {
 
     @Test("Coupon view model maps errors for display")
     func coupon() async {
-        let cart = CartStore(persistence: InMemoryPersistence(), couponService: FakeCouponService())
+        let cart = CartStore(repository: FakeLocalFirstRepository(), couponService: FakeCouponService(), clock: ImmediateClock())
         cart.add(.fixture(price: 100), color: nil, size: .medium)
         let viewModel = CouponViewModel(cart: cart)
         viewModel.code = "WRONG"

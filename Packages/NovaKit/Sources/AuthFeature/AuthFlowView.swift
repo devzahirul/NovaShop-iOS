@@ -66,6 +66,7 @@ struct AuthHeader: View {
 
 struct SignInView: View {
     @State private var viewModel: SignInViewModel
+    @Environment(SessionStore.self) private var session
     let onCreateAccount: () -> Void
     let onSuccess: () -> Void
 
@@ -113,10 +114,12 @@ struct SignInView: View {
                 }
                 .accessibilityIdentifier("auth.signIn")
 
-                SocialSignInButtons(isDisabled: viewModel.isSubmitting) { provider in
-                    Task {
-                        if await viewModel.signIn(with: provider) {
-                            onSuccess()
+                if session.supportsSocialSignIn {
+                    SocialSignInButtons(isDisabled: viewModel.isSubmitting) { provider in
+                        Task {
+                            if await viewModel.signIn(with: provider) {
+                                onSuccess()
+                            }
                         }
                     }
                 }

@@ -120,7 +120,9 @@ public struct CheckoutView: View {
                         .tint(NovaColor.accent)
                         .accessibilityIdentifier("checkout.addAddress")
                 }
-                if viewModel.addresses.isEmpty, viewModel.hasLoaded {
+                if let error = viewModel.loadError {
+                    InlineBanner(error.message, style: .error)
+                } else if viewModel.addresses.isEmpty, viewModel.hasLoaded {
                     InlineBanner("Add a shipping address to continue.", style: .info)
                 }
                 ForEach(viewModel.addresses) { address in
@@ -247,9 +249,14 @@ public struct CheckoutView: View {
     private var bottomBar: some View {
         VStack(spacing: Spacing.sm) {
             if viewModel.step == .review {
+                if viewModel.isOffline {
+                    InlineBanner("You're offline. Connect to the internet to complete checkout — your bag is saved.", style: .info)
+                        .accessibilityIdentifier("checkout.offline")
+                }
                 NovaButton("Place Order · \(Money.format(viewModel.breakdown.total))", isLoading: viewModel.phase == .placing) {
                     Task { await viewModel.placeOrder() }
                 }
+                .disabled(viewModel.isOffline)
                 .accessibilityIdentifier("checkout.placeOrder")
             } else {
                 NovaButton(viewModel.step == .shipping ? "Continue to Payment" : "Review Order", systemImage: "arrow.right") {

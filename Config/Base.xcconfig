@@ -1,0 +1,7 @@
+// Shared build settings. Supabase is OFF unless Config/Supabase.local.xcconfig provides a host + key
+// (that file is git-ignored — see Config/Supabase.local.example.xcconfig). Without it the app runs on
+// bundled demo data, so anyone can clone and run it.
+SUPABASE_HOST =
+SUPABASE_PUBLISHABLE_KEY =
+
+#include? "Supabase.local.xcconfig"

@@ -35,15 +35,32 @@ public final class CheckoutViewModel {
     public private(set) var phase: Phase = .editing
     public private(set) var placedOrder: Order?
     public private(set) var hasLoaded = false
+    /// Addresses / cards couldn't be loaded (e.g. offline with nothing cached).
+    public private(set) var loadError: UserFacingError?
 
     @ObservationIgnored private let cart: CartStore
     @ObservationIgnored private let profile: any ProfileRepository
     @ObservationIgnored private let orders: any OrderService
+    @ObservationIgnored private let isOnline: @MainActor () -> Bool
+    /// One key per checkout attempt, reused if the user retries after a failure/timeout, so the
+    /// server can deduplicate. Rotated only after an order succeeds.
+    @ObservationIgnored private var idempotencyKey = UUID()
 
-    public init(cart: CartStore, profile: any ProfileRepository, orders: any OrderService) {
+    public init(
+        cart: CartStore,
+        profile: any ProfileRepository,
+        orders: any OrderService,
+        isOnline: @escaping @MainActor () -> Bool = { true }
+    ) {
         self.cart = cart
         self.profile = profile
         self.orders = orders
+        self.isOnline = isOnline
+    }
+
+    /// Checkout is a server transaction; it's not offered offline (the bag itself works offline).
+    public var isOffline: Bool {
+        !isOnline()
     }
 
     // MARK: Derived
@@ -83,10 +100,16 @@ public final class CheckoutViewModel {
     public func load() async {
         let previousAddressIDs = Set(addresses.map(\.id))
         let previousCardIDs = Set(savedCards.map(\.id))
-        async let loadedAddresses = profile.addresses()
-        async let loadedCards = profile.paymentMethods()
-        addresses = await loadedAddresses
-        savedCards = await loadedCards
+        do {
+            async let loadedAddresses = profile.addresses()
+            async let loadedCards = profile.paymentMethods()
+            (addresses, savedCards) = try await (loadedAddresses, loadedCards)
+            loadError = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            loadError = error.userFacing
+        }
 
         if let added = addresses.first(where: { !previousAddressIDs.contains($0.id) }), hasLoaded {
             selectedAddressID = added.id
@@ -131,14 +154,27 @@ public final class CheckoutViewModel {
 
     public func placeOrder() async {
         guard let address = selectedAddress, let payment = selectedPayment, !cart.isEmpty, phase != .placing else { return }
+        guard isOnline() else {
+            phase = .failed(CheckoutError.offline.userFacing)
+            return
+        }
         phase = .placing
-        let draft = OrderDraft(items: cart.items, address: address, payment: payment, shipping: shipping, coupon: cart.coupon)
         do {
+            // The server prices *its* copy of the cart — make sure it matches what the user sees.
+            try await cart.syncForCheckout()
+            let draft = OrderDraft(
+                items: cart.items, address: address, payment: payment, shipping: shipping, coupon: cart.coupon,
+                idempotencyKey: idempotencyKey
+            )
             let order = try await orders.placeOrder(draft)
-            cart.clear()
+            cart.completeOrder(draft.items)
+            idempotencyKey = UUID()
             placedOrder = order
             phase = .editing
         } catch {
+            if case .outOfStock = error as? CheckoutError {
+                await cart.sync() // pull the server's view so the bag reflects what's actually available
+            }
             phase = .failed(error.userFacing)
         }
     }
