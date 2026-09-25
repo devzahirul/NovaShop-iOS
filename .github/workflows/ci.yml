@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install swiftlint
+      - run: swiftlint lint --strict --reporter github-actions-logging
+
+  test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Tooling
+        run: brew install xcodegen xcbeautify
+      - name: Cache SwiftPM / DerivedData
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: dd-${{ runner.os }}-${{ hashFiles('Packages/NovaKit/Package.swift', 'project.yml') }}
+      - name: Unit tests (all NovaKit modules)
+        run: make test-unit
+      - name: UI tests (critical paths)
+        run: make test-ui
+      - name: Release build (warnings as errors)
+        run: |
+          make project
+          xcodebuild -project NovaShop.xcodeproj -scheme NovaShop -configuration Release \
+            -destination 'generic/platform=iOS Simulator' SWIFT_TREAT_WARNINGS_AS_ERRORS=YES build | xcbeautify

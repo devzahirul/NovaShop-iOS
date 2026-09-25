@@ -1,0 +1,12 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xcresult
+# SwiftPM
+Packages/NovaKit/.build/
+Packages/NovaKit/.swiftpm/
+Packages/NovaKit/Package.resolved
+# macOS
+.DS_Store
