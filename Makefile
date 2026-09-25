@@ -7,7 +7,7 @@ SIMULATOR_ID ?= $(shell xcrun simctl list devices available -j | python3 -c "imp
 DESTINATION := platform=iOS Simulator,id=$(SIMULATOR_ID)
 XCBEAUTIFY := $(shell command -v xcbeautify 2>/dev/null || echo cat)
 
-.PHONY: help bootstrap project open build test test-unit test-ui lint format screenshots fixtures launch-bench size clean
+.PHONY: leak-check help bootstrap project open build test test-unit test-ui lint format screenshots fixtures launch-bench size clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -53,6 +53,9 @@ fixtures: ## Regenerate the fixture API JSON
 
 launch-bench: project ## Cold-launch 6× (Release) and print in-app signpost timings
 	./scripts/launch_bench.sh '$(SIMULATOR_ID)'
+
+leak-check: project ## Leaks over the full purchase flow on a device (DEVICE_ID=… TEAM=…)
+	./scripts/leak_check.sh
 
 size: project ## Stripped device binary size (App Thinning report needs an archive + signing)
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -destination 'generic/platform=iOS' \

@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		2CD2EE54AE5742269CD9D5F2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9E6CA30F132C4FF2C648C197 /* PrivacyInfo.xcprivacy */; };
+		31D7F22507925E2981C69F1A /* LeakFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19AF6346E64772BE87C9893C /* LeakFlowTests.swift */; };
 		8A4BC8517F0A23A7FC25DF1B /* NovaShopApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C1A51993AC14F68A8930DEA /* NovaShopApp.swift */; };
 		8AA65586DB69D331B972E3CC /* NovaShopUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A166DFCA7194B3C9ECE777F3 /* NovaShopUITests.swift */; };
 		C196B850A0D5D3D3ABA4C38E /* ScreenshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4CAC64600A8D410D6EE5429 /* ScreenshotTests.swift */; };
@@ -26,6 +27,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		19AF6346E64772BE87C9893C /* LeakFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeakFlowTests.swift; sourceTree = "<group>"; };
 		1C1A51993AC14F68A8930DEA /* NovaShopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaShopApp.swift; sourceTree = "<group>"; };
 		9E0CA0A3A6D6838989A4286B /* NovaKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = NovaKit; path = Packages/NovaKit; sourceTree = SOURCE_ROOT; };
 		9E6CA30F132C4FF2C648C197 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -61,6 +63,7 @@
 		235BDE59A2D7A6E61E94EB28 /* UITests */ = {
 			isa = PBXGroup;
 			children = (
+				19AF6346E64772BE87C9893C /* LeakFlowTests.swift */,
 				A166DFCA7194B3C9ECE777F3 /* NovaShopUITests.swift */,
 				D4CAC64600A8D410D6EE5429 /* ScreenshotTests.swift */,
 			);
@@ -218,6 +221,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				31D7F22507925E2981C69F1A /* LeakFlowTests.swift in Sources */,
 				8AA65586DB69D331B972E3CC /* NovaShopUITests.swift in Sources */,
 				C196B850A0D5D3D3ABA4C38E /* ScreenshotTests.swift in Sources */,
 			);

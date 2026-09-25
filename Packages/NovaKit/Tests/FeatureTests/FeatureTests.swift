@@ -280,6 +280,19 @@ struct CheckoutViewModelTests {
         #expect(await orders.placed.first?.payment == card)
     }
 
+    @Test("Adding a card once shows it once (saved card must not also linger as one-time)")
+    func cardAddedOnceShowsOnce() async throws {
+        let profile = FakeProfileRepository(addresses: [.fixture()])
+        let viewModel = CheckoutViewModel(cart: makeCart(), profile: profile, orders: FakeOrderService())
+        await viewModel.load()
+        let card = PaymentMethod(kind: .card(brand: .visa, last4: "4242", expiry: "12/30", holder: "Olivia"))
+        _ = try await profile.save(card)   // AddCardView saved it ("save for later" on)…
+        viewModel.useCard(card)            // …then handed it to checkout
+        await viewModel.load()
+        let cards = viewModel.paymentOptions.filter { if case .card = $0.kind { true } else { false } }
+        #expect(cards.count == 1, "Got \(cards.count): \(cards.map(\.title))")
+    }
+
     @Test("Newly added card is auto-selected on reload")
     func autoSelectNewCard() async throws {
         let profile = FakeProfileRepository(addresses: [.fixture()])
