@@ -156,6 +156,29 @@ struct ValidationTests {
         #expect(Validation.expiry("1227", now: now) == .invalidExpiry)
     }
 
+    @Test("ZIP and ZIP+4", arguments: [
+        ("10001", true), ("10001-1234", true), ("100011234", true), (" 10001 ", true),
+        ("1000", false), ("10001-12", false), ("ABCDE", false), ("", false),
+    ])
+    func postalCode(input: String, isValid: Bool) {
+        #expect((Validation.postalCode(input) == nil) == isValid)
+    }
+
+    @Test("All 50 states plus DC are selectable")
+    func usStates() {
+        #expect(Validation.usStates.count == 51)
+        #expect(Set(Validation.usStates).count == 51)
+        #expect(Validation.usStates.contains("NJ"))
+    }
+
+    @Test("State search matches names and exact codes")
+    func stateSearch() {
+        #expect(USState.search("jersey").map(\.code) == ["NJ"])
+        #expect(USState.search("ny").map(\.code) == ["NY"])
+        #expect(USState.search("north").map(\.code) == ["NC", "ND"])
+        #expect(USState.search("").count == 51)
+    }
+
     @Test("CVV length depends on brand")
     func cvv() {
         #expect(Validation.cvv("123", brand: .visa) == nil)

@@ -63,9 +63,9 @@ public struct CheckoutView: View {
         .task { await viewModel.load() }
         .sheet(isPresented: $isAddCardPresented) {
             NavigationStack {
-                AddCardView(viewModel: makeAddCardViewModel()) {
+                AddCardView(viewModel: makeAddCardViewModel()) { card in
                     isAddCardPresented = false
-                    Task { await viewModel.load() }
+                    viewModel.useCard(card)
                 }
             }
         }

@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -28,9 +28,9 @@
 /* Begin PBXFileReference section */
 		1C1A51993AC14F68A8930DEA /* NovaShopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaShopApp.swift; sourceTree = "<group>"; };
 		9E0CA0A3A6D6838989A4286B /* NovaKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = NovaKit; path = Packages/NovaKit; sourceTree = SOURCE_ROOT; };
-		9E6CA30F132C4FF2C648C197 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		9E6CA30F132C4FF2C648C197 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A166DFCA7194B3C9ECE777F3 /* NovaShopUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaShopUITests.swift; sourceTree = "<group>"; };
-		A2AABE9AE5C93D71D45CEE43 /* NovaShop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovaShop.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2AABE9AE5C93D71D45CEE43 /* NovaShop.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NovaShop.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CE7666EB03102B712AD670C5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D4CAC64600A8D410D6EE5429 /* ScreenshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotTests.swift; sourceTree = "<group>"; };
 		DF7D64AA3BB289456B80FE5D /* NovaShopUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = NovaShopUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -181,6 +181,7 @@
 			packageReferences = (
 				EC89226345776BEEB2EF443D /* XCLocalSwiftPackageReference "Packages/NovaKit" */,
 			);
+			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -390,7 +391,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 6VC84T9283;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -426,7 +426,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 6VC84T9283;
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

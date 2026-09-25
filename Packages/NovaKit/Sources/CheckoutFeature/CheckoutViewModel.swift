@@ -29,6 +29,8 @@ public final class CheckoutViewModel {
     public var selectedAddressID: Address.ID?
     public var shipping: ShippingOption = .standard
     public private(set) var savedCards: [PaymentMethod] = []
+    /// Cards entered with "save for later" off: usable for this order, never persisted.
+    public private(set) var oneTimeCards: [PaymentMethod] = []
     public var selectedPaymentID: PaymentMethod.ID?
     public private(set) var phase: Phase = .editing
     public private(set) var placedOrder: Order?
@@ -59,7 +61,7 @@ public final class CheckoutViewModel {
     }
 
     public var paymentOptions: [PaymentMethod] {
-        savedCards + [.applePay, .payPal]
+        oneTimeCards + savedCards + [.applePay, .payPal]
     }
 
     public var selectedPayment: PaymentMethod? {
@@ -97,6 +99,17 @@ public final class CheckoutViewModel {
             selectedPaymentID = paymentOptions.first?.id
         }
         hasLoaded = true
+    }
+
+    /// Called when the add-card sheet finishes. Selects the card immediately (no reload round-trip),
+    /// and keeps it for this order even if the shopper chose not to save it.
+    public func useCard(_ card: PaymentMethod) {
+        if !savedCards.contains(card) {
+            oneTimeCards.removeAll { $0.id == card.id }
+            oneTimeCards.insert(card, at: 0)
+        }
+        selectedPaymentID = card.id
+        Task { await load() }
     }
 
     public func advance() {

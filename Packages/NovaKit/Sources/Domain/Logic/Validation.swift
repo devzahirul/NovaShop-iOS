@@ -22,7 +22,7 @@ public enum Validation {
             case .invalidExpiry: "Use MM/YY"
             case .expiredCard: "This card has expired"
             case .invalidCVV: "Check your security code"
-            case .invalidPostalCode: "Enter a valid ZIP code"
+            case .invalidPostalCode: "Enter a 5-digit ZIP code"
             }
         }
     }
@@ -48,10 +48,18 @@ public enum Validation {
         value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .required(field) : nil
     }
 
+    /// US ZIP (`12345`) or ZIP+4 (`12345-6789` / `123456789`).
     public static func postalCode(_ value: String) -> Failure? {
-        let digits = value.filter(\.isNumber)
-        guard !value.isEmpty else { return .required("ZIP code") }
-        return digits.count == 5 && value.count == 5 ? nil : .invalidPostalCode
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return .required("ZIP code") }
+        let digits = trimmed.filter(\.isNumber)
+        let onlyDigitsAndHyphen = trimmed.allSatisfy { $0.isNumber || $0 == "-" }
+        return onlyDigitsAndHyphen && (digits.count == 5 || digits.count == 9) ? nil : .invalidPostalCode
+    }
+
+    /// USPS codes for the 50 states + DC.
+    public static var usStates: [String] {
+        USState.all.map(\.code)
     }
 
     // MARK: Cards
@@ -136,4 +144,37 @@ public enum CardFormatter {
         guard digits.count > 2 else { return digits }
         return "\(digits.prefix(2))/\(digits.dropFirst(2))"
     }
+}
+
+/// A US state / district, for address entry. Full names make the picker searchable ("jersey" → NJ).
+public struct USState: Identifiable, Hashable, Sendable {
+    public let code: String
+    public let name: String
+    public var id: String {
+        code
+    }
+
+    public static func named(_ code: String) -> USState? {
+        all.first { $0.code == code }
+    }
+
+    public static func search(_ text: String) -> [USState] {
+        let term = text.trimmingCharacters(in: .whitespaces)
+        guard !term.isEmpty else { return all }
+        return all.filter { $0.name.localizedCaseInsensitiveContains(term) || $0.code.caseInsensitiveCompare(term) == .orderedSame }
+    }
+
+    public static let all: [USState] = [
+        ("AL", "Alabama"), ("AK", "Alaska"), ("AZ", "Arizona"), ("AR", "Arkansas"), ("CA", "California"),
+        ("CO", "Colorado"), ("CT", "Connecticut"), ("DE", "Delaware"), ("DC", "District of Columbia"),
+        ("FL", "Florida"), ("GA", "Georgia"), ("HI", "Hawaii"), ("ID", "Idaho"), ("IL", "Illinois"),
+        ("IN", "Indiana"), ("IA", "Iowa"), ("KS", "Kansas"), ("KY", "Kentucky"), ("LA", "Louisiana"),
+        ("ME", "Maine"), ("MD", "Maryland"), ("MA", "Massachusetts"), ("MI", "Michigan"), ("MN", "Minnesota"),
+        ("MS", "Mississippi"), ("MO", "Missouri"), ("MT", "Montana"), ("NE", "Nebraska"), ("NV", "Nevada"),
+        ("NH", "New Hampshire"), ("NJ", "New Jersey"), ("NM", "New Mexico"), ("NY", "New York"),
+        ("NC", "North Carolina"), ("ND", "North Dakota"), ("OH", "Ohio"), ("OK", "Oklahoma"), ("OR", "Oregon"),
+        ("PA", "Pennsylvania"), ("RI", "Rhode Island"), ("SC", "South Carolina"), ("SD", "South Dakota"),
+        ("TN", "Tennessee"), ("TX", "Texas"), ("UT", "Utah"), ("VT", "Vermont"), ("VA", "Virginia"),
+        ("WA", "Washington"), ("WV", "West Virginia"), ("WI", "Wisconsin"), ("WY", "Wyoming"),
+    ].map { USState(code: $0.0, name: $0.1) }
 }

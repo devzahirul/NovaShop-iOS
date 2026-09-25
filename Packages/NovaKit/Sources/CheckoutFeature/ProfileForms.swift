@@ -77,18 +77,50 @@ public struct AddressListView: View {
 @MainActor
 @Observable
 public final class AddAddressViewModel {
-    public enum Field: Hashable { case name, line1, city, state, postalCode }
+    /// Declaration order = on-screen order, so "first invalid field" is what the user sees first.
+    public enum Field: Hashable, CaseIterable { case name, line1, city, state, postalCode }
 
-    public var fullName: String
-    public var line1 = ""
+    /// Editing a field clears its error immediately — stale red text after a fix reads as "still broken".
+    public var fullName: String {
+        didSet { errors[.name] = nil }
+    }
+
+    public var line1 = "" {
+        didSet { errors[.line1] = nil }
+    }
+
     public var line2 = ""
-    public var city = ""
-    public var state = ""
-    public var postalCode = ""
+    public var city = "" {
+        didSet { errors[.city] = nil }
+    }
+
+    public var state = "" {
+        didSet { errors[.state] = nil }
+    }
+
+    public var postalCode = "" {
+        didSet { errors[.postalCode] = nil }
+    }
+
     public var isDefault = false
     public private(set) var errors: [Field: String] = [:]
     public private(set) var isSaving = false
     public private(set) var saveError: UserFacingError?
+    /// Incremented on every rejected submit; the view scrolls + plays a haptic on change.
+    public private(set) var failedSubmitCount = 0
+
+    public var firstInvalidField: Field? {
+        Field.allCases.first { errors[$0] != nil }
+    }
+
+    /// One-line summary for the banner, e.g. "Please choose a state." or "Please fix 2 fields."
+    public var errorSummary: String? {
+        switch errors.count {
+        case 0: nil
+        case 1: errors.values.first.map { "\($0)." }
+        default: "Please fix the \(errors.count) highlighted fields."
+        }
+    }
 
     @ObservationIgnored private let profile: any ProfileRepository
 
@@ -97,7 +129,7 @@ public final class AddAddressViewModel {
         fullName = prefillName
     }
 
-    public static let states = ["AL", "AK", "AZ", "CA", "CO", "CT", "FL", "GA", "IL", "MA", "NY", "OR", "TX", "WA"]
+    public static let states = Validation.usStates
 
     /// Validates every field and returns whether the form is valid. Errors appear only after submit.
     public func validate() -> Bool {
@@ -112,12 +144,18 @@ public final class AddAddressViewModel {
     }
 
     public func save() async -> Bool {
-        guard validate() else { return false }
+        guard !isSaving else { return false }
+        saveError = nil
+        guard validate() else {
+            failedSubmitCount += 1
+            return false
+        }
         isSaving = true
         defer { isSaving = false }
         let address = Address(
-            fullName: fullName.trimmingCharacters(in: .whitespaces), line1: line1, line2: line2, city: city,
-            state: state, postalCode: postalCode, isDefault: isDefault
+            fullName: fullName.trimmingCharacters(in: .whitespaces), line1: line1.trimmingCharacters(in: .whitespaces),
+            line2: line2.trimmingCharacters(in: .whitespaces), city: city.trimmingCharacters(in: .whitespaces),
+            state: state, postalCode: postalCode.trimmingCharacters(in: .whitespaces), isDefault: isDefault
         )
         do {
             _ = try await profile.save(address)
@@ -131,6 +169,7 @@ public final class AddAddressViewModel {
 
 public struct AddAddressView: View {
     @State private var viewModel: AddAddressViewModel
+    @State private var isStatePickerPresented = false
     @Environment(\.dismiss) private var dismiss
 
     public init(viewModel: @autoclosure @escaping () -> AddAddressViewModel) {
@@ -138,85 +177,161 @@ public struct AddAddressView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(spacing: Spacing.md) {
-                NovaTextField(
-                    "Full Name",
-                    text: $viewModel.fullName,
-                    error: viewModel.errors[.name],
-                    contentType: .name,
-                    autocapitalization: .words
-                )
-                .accessibilityIdentifier("address.name")
-                NovaTextField("Street Address", text: $viewModel.line1, error: viewModel.errors[.line1], contentType: .streetAddressLine1)
-                    .accessibilityIdentifier("address.line1")
-                NovaTextField("Apartment, suite (optional)", text: $viewModel.line2, contentType: .streetAddressLine2)
-                NovaTextField(
-                    "City",
-                    text: $viewModel.city,
-                    error: viewModel.errors[.city],
-                    contentType: .addressCity,
-                    autocapitalization: .words
-                )
-                .accessibilityIdentifier("address.city")
-                HStack(alignment: .top, spacing: Spacing.md) {
-                    VStack(alignment: .leading, spacing: Spacing.xs) {
-                        Menu {
-                            Picker("State", selection: $viewModel.state) {
-                                ForEach(AddAddressViewModel.states, id: \.self) { Text($0).tag($0) }
-                            }
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("State").font(NovaFont.caption).foregroundStyle(NovaColor.textSecondary)
-                                    Text(viewModel.state.isEmpty ? "Select" : viewModel.state).font(NovaFont.body)
-                                        .foregroundStyle(viewModel.state.isEmpty ? NovaColor.textTertiary : NovaColor.textPrimary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.down").font(.caption).foregroundStyle(NovaColor.textSecondary)
-                            }
-                            .padding(.horizontal, Spacing.md)
-                            .frame(minHeight: 56)
-                            .background(NovaColor.surface, in: RoundedRectangle(cornerRadius: Radius.sm))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: Radius.sm)
-                                    .strokeBorder(viewModel.errors[.state] == nil ? NovaColor.border : NovaColor.error)
-                            }
-                        }
-                        .accessibilityIdentifier("address.state")
-                        if let error = viewModel.errors[.state] {
-                            Text(error).font(NovaFont.caption).foregroundStyle(NovaColor.error)
-                        }
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: Spacing.md) {
+                    if let summary = viewModel.errorSummary {
+                        InlineBanner(summary, style: .error)
+                            .id("errors")
+                            .accessibilityIdentifier("address.errorBanner")
                     }
                     NovaTextField(
-                        "ZIP Code", text: $viewModel.postalCode, error: viewModel.errors[.postalCode],
-                        contentType: .postalCode, keyboard: .numberPad
+                        "Full Name",
+                        text: $viewModel.fullName,
+                        error: viewModel.errors[.name],
+                        contentType: .name,
+                        autocapitalization: .words
                     )
-                    .accessibilityIdentifier("address.zip")
-                }
-                ToggleRow("Set as default address", isOn: $viewModel.isDefault)
-                if let error = viewModel.saveError {
-                    InlineBanner(error.message, style: .error)
-                }
-            }
-            .padding(Spacing.screen)
-        }
-        .scrollDismissesKeyboard(.interactively)
-        .safeAreaInset(edge: .bottom) {
-            NovaButton("Save Address", isLoading: viewModel.isSaving) {
-                Task {
-                    if await viewModel.save() {
-                        dismiss()
+                    .accessibilityIdentifier("address.name")
+                    .id(AddAddressViewModel.Field.name)
+                    NovaTextField(
+                        "Street Address",
+                        text: $viewModel.line1,
+                        error: viewModel.errors[.line1],
+                        contentType: .streetAddressLine1
+                    )
+                    .accessibilityIdentifier("address.line1")
+                    .id(AddAddressViewModel.Field.line1)
+                    NovaTextField("Apartment, suite (optional)", text: $viewModel.line2, contentType: .streetAddressLine2)
+                    NovaTextField(
+                        "City",
+                        text: $viewModel.city,
+                        error: viewModel.errors[.city],
+                        contentType: .addressCity,
+                        autocapitalization: .words
+                    )
+                    .accessibilityIdentifier("address.city")
+                    .id(AddAddressViewModel.Field.city)
+                    HStack(alignment: .top, spacing: Spacing.md) {
+                        VStack(alignment: .leading, spacing: Spacing.xs) {
+                            Button {
+                                dismissKeyboard()
+                                isStatePickerPresented = true
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("State").font(NovaFont.caption).foregroundStyle(NovaColor.textSecondary)
+                                        Text(USState.named(viewModel.state)?.name ?? "Select")
+                                            .font(NovaFont.body)
+                                            .lineLimit(1)
+                                            .foregroundStyle(viewModel.state.isEmpty ? NovaColor.textTertiary : NovaColor.textPrimary)
+                                    }
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "chevron.down").font(.caption).foregroundStyle(NovaColor.textSecondary)
+                                }
+                                .padding(.horizontal, Spacing.md)
+                                .frame(minHeight: 56)
+                                .background(NovaColor.surface, in: RoundedRectangle(cornerRadius: Radius.sm))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: Radius.sm)
+                                        .strokeBorder(viewModel.errors[.state] == nil ? NovaColor.border : NovaColor.error)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("State")
+                            .accessibilityValue(USState.named(viewModel.state)?.name ?? "Not selected")
+                            .accessibilityIdentifier("address.state")
+                            if let error = viewModel.errors[.state] {
+                                Text(error).font(NovaFont.caption).foregroundStyle(NovaColor.error)
+                            }
+                        }
+                        NovaTextField(
+                            "ZIP Code", text: $viewModel.postalCode, error: viewModel.errors[.postalCode],
+                            contentType: .postalCode, keyboard: .numberPad
+                        )
+                        .accessibilityIdentifier("address.zip")
                     }
+                    .id(AddAddressViewModel.Field.state) // state + ZIP share a row
+                    ToggleRow("Set as default address", isOn: $viewModel.isDefault)
+                    if let error = viewModel.saveError {
+                        InlineBanner(error.message, style: .error)
+                    }
+                    // In the scroll content, not a floating bar: a bar lifted above the keyboard covers
+                    // the fields below the one being edited, so taps meant for them hit "Save" instead.
+                    NovaButton("Save Address", isLoading: viewModel.isSaving) {
+                        dismissKeyboard()
+                        Task {
+                            if await viewModel.save() {
+                                dismiss()
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("address.save")
+                    .padding(.top, Spacing.sm)
+                }
+                .padding(Spacing.screen)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .novaScreenBackground()
+            .navigationTitle("Add Address")
+            .navigationBarTitleDisplayMode(.inline)
+            .keyboardDoneButton()
+            .sheet(isPresented: $isStatePickerPresented) {
+                StatePickerSheet(selection: $viewModel.state)
+            }
+            .sensoryFeedback(.error, trigger: viewModel.failedSubmitCount)
+            .onChange(of: viewModel.failedSubmitCount) {
+                // A rejected submit must be *visible*: drop the keyboard and bring the first problem into view.
+                dismissKeyboard()
+                let target = viewModel.firstInvalidField.map { AnyHashable($0) } ?? AnyHashable("errors")
+                withAnimation(.snappy) { proxy.scrollTo(target, anchor: .center) }
+            }
+        }
+    }
+}
+
+/// Searchable list of states — a 51-item menu of bare codes is slow to scan and easy to mis-tap.
+struct StatePickerSheet: View {
+    @Binding var selection: String
+    @State private var query = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(USState.search(query)) { state in
+                Button {
+                    selection = state.code
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(state.name).foregroundStyle(NovaColor.textPrimary)
+                        Spacer()
+                        Text(state.code).font(NovaFont.callout.monospaced()).foregroundStyle(NovaColor.textSecondary)
+                        if state.code == selection {
+                            Image(systemName: "checkmark").foregroundStyle(NovaColor.accent).fontWeight(.semibold)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("state.\(state.code)")
+                .accessibilityAddTraits(state.code == selection ? .isSelected : [])
+            }
+            .listStyle(.plain)
+            .overlay {
+                if USState.search(query).isEmpty {
+                    ContentUnavailableView.search(text: query)
                 }
             }
-            .accessibilityIdentifier("address.save")
-            .padding(Spacing.screen)
-            .background(.bar)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search states")
+            .navigationTitle("State")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
         }
-        .novaScreenBackground()
-        .navigationTitle("Add Address")
-        .navigationBarTitleDisplayMode(.inline)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
@@ -225,22 +340,27 @@ public struct AddAddressView: View {
 @MainActor
 @Observable
 public final class AddCardViewModel {
-    public enum Field: Hashable { case number, name, expiry, cvv }
+    public enum Field: Hashable, CaseIterable { case number, name, expiry, cvv }
 
     public var number = "" {
         didSet {
             if number != CardFormatter.formatNumber(number) {
                 number = CardFormatter.formatNumber(number)
             }
+            errors[.number] = nil
         }
     }
 
-    public var holder = ""
+    public var holder = "" {
+        didSet { errors[.name] = nil }
+    }
+
     public var expiry = "" {
         didSet {
             if expiry != CardFormatter.formatExpiry(expiry) {
                 expiry = CardFormatter.formatExpiry(expiry)
             }
+            errors[.expiry] = nil
         }
     }
 
@@ -249,6 +369,7 @@ public final class AddCardViewModel {
             if cvv.count > 4 {
                 cvv = String(cvv.prefix(4))
             }
+            errors[.cvv] = nil
         }
     }
 
@@ -262,6 +383,13 @@ public final class AddCardViewModel {
     public init(profile: any ProfileRepository, now: @escaping () -> Date = Date.init) {
         self.profile = profile
         self.now = now
+    }
+
+    /// Incremented on every rejected submit; the view scrolls + plays a haptic on change.
+    public private(set) var failedSubmitCount = 0
+
+    public var firstInvalidField: Field? {
+        Field.allCases.first { errors[$0] != nil }
     }
 
     public var brand: CardBrand {
@@ -285,7 +413,11 @@ public final class AddCardViewModel {
     /// Only a tokenised reference is kept — in production the PAN goes straight to the payment
     /// provider's SDK and never touches our storage or logs.
     public func save() async -> PaymentMethod? {
-        guard validate() else { return nil }
+        guard !isSaving else { return nil }
+        guard validate() else {
+            failedSubmitCount += 1
+            return nil
+        }
         isSaving = true
         defer { isSaving = false }
         let method = PaymentMethod(kind: .card(brand: brand, last4: last4, expiry: expiry, holder: holder))
@@ -298,72 +430,84 @@ public final class AddCardViewModel {
 
 public struct AddCardView: View {
     @State private var viewModel: AddCardViewModel
-    private let onSaved: () -> Void
+    private let onSaved: (PaymentMethod) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    public init(viewModel: @autoclosure @escaping () -> AddCardViewModel, onSaved: @escaping () -> Void) {
+    /// `onSaved` receives the card even when "save for later" is off, so it can pay for this order.
+    public init(viewModel: @autoclosure @escaping () -> AddCardViewModel, onSaved: @escaping (PaymentMethod) -> Void) {
         _viewModel = State(wrappedValue: viewModel())
         self.onSaved = onSaved
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(spacing: Spacing.lg) {
-                CardPreview(number: viewModel.number, holder: viewModel.holder, expiry: viewModel.expiry, brand: viewModel.brand)
-                NovaTextField(
-                    "Card Number", text: $viewModel.number, prompt: "1234 5678 9012 3456", error: viewModel.errors[.number],
-                    contentType: .creditCardNumber, keyboard: .numberPad
-                )
-                .accessibilityIdentifier("card.number")
-                NovaTextField(
-                    "Name on Card",
-                    text: $viewModel.holder,
-                    error: viewModel.errors[.name],
-                    contentType: .name,
-                    autocapitalization: .words
-                )
-                .accessibilityIdentifier("card.name")
-                HStack(alignment: .top, spacing: Spacing.md) {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: Spacing.lg) {
+                    CardPreview(number: viewModel.number, holder: viewModel.holder, expiry: viewModel.expiry, brand: viewModel.brand)
                     NovaTextField(
-                        "Expiration Date",
-                        text: $viewModel.expiry,
-                        prompt: "MM/YY",
-                        error: viewModel.errors[.expiry],
-                        keyboard: .numberPad
+                        "Card Number", text: $viewModel.number, prompt: "1234 5678 9012 3456", error: viewModel.errors[.number],
+                        contentType: .creditCardNumber, keyboard: .numberPad
                     )
-                    .accessibilityIdentifier("card.expiry")
+                    .accessibilityIdentifier("card.number")
+                    .id(AddCardViewModel.Field.number)
                     NovaTextField(
-                        "CVV",
-                        text: $viewModel.cvv,
-                        prompt: "123",
-                        error: viewModel.errors[.cvv],
-                        isSecure: true,
-                        keyboard: .numberPad
+                        "Name on Card",
+                        text: $viewModel.holder,
+                        error: viewModel.errors[.name],
+                        contentType: .name,
+                        autocapitalization: .words
                     )
-                    .accessibilityIdentifier("card.cvv")
-                }
-                ToggleRow("Save this card for future purchases", isOn: $viewModel.saveForLater)
-            }
-            .padding(Spacing.screen)
-        }
-        .scrollDismissesKeyboard(.interactively)
-        .safeAreaInset(edge: .bottom) {
-            NovaButton("Add Card", isLoading: viewModel.isSaving) {
-                Task {
-                    if await viewModel.save() != nil {
-                        onSaved()
+                    .accessibilityIdentifier("card.name")
+                    .id(AddCardViewModel.Field.name)
+                    HStack(alignment: .top, spacing: Spacing.md) {
+                        NovaTextField(
+                            "Expiration Date",
+                            text: $viewModel.expiry,
+                            prompt: "MM/YY",
+                            error: viewModel.errors[.expiry],
+                            keyboard: .numberPad
+                        )
+                        .accessibilityIdentifier("card.expiry")
+                        NovaTextField(
+                            "CVV",
+                            text: $viewModel.cvv,
+                            prompt: "123",
+                            error: viewModel.errors[.cvv],
+                            isSecure: true,
+                            keyboard: .numberPad
+                        )
+                        .accessibilityIdentifier("card.cvv")
                     }
+                    .id(AddCardViewModel.Field.expiry)
+                    ToggleRow("Save this card for future purchases", isOn: $viewModel.saveForLater)
+                    // Part of the form (see AddAddressView): a keyboard-lifted bar would cover the fields.
+                    NovaButton("Add Card", isLoading: viewModel.isSaving) {
+                        dismissKeyboard()
+                        Task {
+                            if let method = await viewModel.save() {
+                                onSaved(method)
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("card.save")
+                    .padding(.top, Spacing.sm)
                 }
+                .padding(Spacing.screen)
             }
-            .accessibilityIdentifier("card.save")
-            .padding(Spacing.screen)
-            .background(.bar)
-        }
-        .novaScreenBackground()
-        .navigationTitle("Add Card")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            .scrollDismissesKeyboard(.interactively)
+            .novaScreenBackground()
+            .navigationTitle("Add Card")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+            .keyboardDoneButton()
+            .sensoryFeedback(.error, trigger: viewModel.failedSubmitCount)
+            .onChange(of: viewModel.failedSubmitCount) {
+                dismissKeyboard()
+                let target = viewModel.firstInvalidField == .cvv ? .expiry : viewModel.firstInvalidField
+                withAnimation(.snappy) { proxy.scrollTo(target, anchor: .center) }
+            }
         }
     }
 }
@@ -457,7 +601,7 @@ public struct PaymentMethodsView: View {
         .task { await viewModel.load() }
         .sheet(isPresented: $isAddCardPresented) {
             NavigationStack {
-                AddCardView(viewModel: makeAddCardViewModel()) {
+                AddCardView(viewModel: makeAddCardViewModel()) { _ in
                     isAddCardPresented = false
                     Task { await viewModel.load() }
                 }

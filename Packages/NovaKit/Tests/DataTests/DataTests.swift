@@ -94,6 +94,31 @@ struct PersistenceTests {
         #expect(await FileStore<[CartItem]>(filename: "cart", directory: directory).load() == items)
     }
 
+    /// Regression: the real container is ".../Library/Application Support/" — a path with a space.
+    /// `URL.path()` percent-encodes it ("Application%20Support"), so `fileExists` always said "no"
+    /// and every store silently loaded empty on devices (addresses, cards, cart, orders…).
+    @Test("FileStore reads back from a directory whose path contains a space")
+    func directoryWithSpace() async throws {
+        let directory = temporaryDirectory().appending(path: "Application Support")
+        let store = FileStore<[Address]>(filename: "addresses", directory: directory)
+        try await store.save([.fixture()])
+        #expect(await FileStore<[Address]>(filename: "addresses", directory: directory).load()?.count == 1)
+    }
+
+    @Test("Profile repository persists addresses across instances (app relaunch)")
+    func addressesSurviveRelaunch() async throws {
+        let directory = temporaryDirectory().appending(path: "Application Support")
+        func makeRepository() -> LocalProfileRepository {
+            LocalProfileRepository(
+                addressStore: FileStore<[Address]>(filename: "addresses", directory: directory),
+                paymentStore: FileStore<[PaymentMethod]>(filename: "payment-methods", directory: directory)
+            )
+        }
+        _ = try await makeRepository().save(.fixture())
+        _ = try await makeRepository().save(Address(fullName: "B", line1: "1", city: "NY", state: "NY", postalCode: "10001"))
+        #expect(await makeRepository().addresses().count == 2, "Second save must append to, not overwrite, the first")
+    }
+
     @Test("Corrupt files are discarded instead of crashing")
     func corruptFile() async throws {
         let directory = temporaryDirectory().appending(path: "NovaShop")

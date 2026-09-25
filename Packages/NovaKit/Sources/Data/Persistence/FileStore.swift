@@ -20,7 +20,7 @@ public actor FileStore<Value: Codable & Sendable>: Persisting {
     }
 
     public func load() async -> Value? {
-        guard FileManager.default.fileExists(atPath: url.path()) else { return nil }
+        guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return nil }
         do {
             let data = try Data(contentsOf: url)
             return try decoder.decode(Value.self, from: data)
@@ -33,7 +33,7 @@ public actor FileStore<Value: Codable & Sendable>: Persisting {
 
     public func save(_ value: Value) async throws {
         let directory = url.deletingLastPathComponent()
-        if !FileManager.default.fileExists(atPath: directory.path()) {
+        if !FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)) {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         let data = try encoder.encode(value)

@@ -229,6 +229,25 @@ struct CheckoutViewModelTests {
         #expect(!viewModel.back())
     }
 
+    @Test("A card added without saving is still usable for this order, and selected")
+    func oneTimeCard() async {
+        let profile = FakeProfileRepository(addresses: [.fixture()])
+        let orders = FakeOrderService()
+        let viewModel = CheckoutViewModel(cart: makeCart(), profile: profile, orders: orders)
+        await viewModel.load()
+        let card = PaymentMethod(kind: .card(brand: .visa, last4: "4242", expiry: "12/30", holder: "Olivia"))
+
+        viewModel.useCard(card) // "Save for later" was off → never persisted
+        #expect(viewModel.selectedPaymentID == card.id)
+        #expect(viewModel.paymentOptions.first == card)
+        #expect(await profile.paymentMethods().isEmpty)
+
+        viewModel.advance()
+        viewModel.advance()
+        await viewModel.placeOrder()
+        #expect(await orders.placed.first?.payment == card)
+    }
+
     @Test("Newly added card is auto-selected on reload")
     func autoSelectNewCard() async throws {
         let profile = FakeProfileRepository(addresses: [.fixture()])
@@ -261,6 +280,45 @@ struct FormTests {
         let method = try #require(await viewModel.save())
         #expect(method.kind == .card(brand: .visa, last4: "4242", expiry: "12/30", holder: "Olivia Chen"))
         #expect(await profile.paymentMethods().count == 1)
+    }
+
+    @Test("Address: a rejected save explains itself and points at the first bad field")
+    func addressRejectedSave() async {
+        let profile = FakeProfileRepository()
+        let viewModel = AddAddressViewModel(profile: profile, prefillName: "Olivia Chen")
+        viewModel.line1 = "456 Oak Avenue"
+        viewModel.city = "New York"
+        viewModel.postalCode = "10001"
+
+        #expect(await viewModel.save() == false, "State missing")
+        #expect(viewModel.failedSubmitCount == 1)
+        #expect(viewModel.firstInvalidField == .state)
+        #expect(viewModel.errorSummary == "State is required.")
+        #expect(await profile.addresses().isEmpty)
+
+        viewModel.state = "NY"
+        #expect(viewModel.errors.isEmpty, "Fixing a field clears its error immediately")
+        #expect(await viewModel.save())
+        #expect(await profile.addresses().first?.state == "NY")
+    }
+
+    @Test("Address: field order drives which error is scrolled to")
+    func addressFirstInvalidField() async {
+        let viewModel = AddAddressViewModel(profile: FakeProfileRepository())
+        #expect(await viewModel.save() == false)
+        #expect(viewModel.firstInvalidField == .name)
+        #expect(viewModel.errorSummary == "Please fix the 5 highlighted fields.")
+    }
+
+    @Test("Card: rejected save is signalled; editing clears the field's error")
+    func cardRejectedSave() async {
+        let viewModel = AddCardViewModel(profile: FakeProfileRepository())
+        viewModel.number = "4242 4242 4242 4241"
+        #expect(await viewModel.save() == nil)
+        #expect(viewModel.failedSubmitCount == 1)
+        #expect(viewModel.firstInvalidField == .number)
+        viewModel.number = "4242424242424242"
+        #expect(viewModel.errors[.number] == nil)
     }
 
     @Test("Coupon view model maps errors for display")

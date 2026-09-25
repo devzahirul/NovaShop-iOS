@@ -47,15 +47,15 @@ struct RouterTests {
 
     @Test("Guests are sent to sign in, then resume where they were going")
     func authGate() {
-        var signedIn = false
+        let session = FakeSessionFlag()
         let router = Router()
-        router.isAuthenticated = { signedIn }
+        router.isAuthenticated = { session.isSignedIn }
 
         router.push(.checkout)
         #expect(router.sheet == .auth(then: .checkout))
         #expect(router.path(for: .home).isEmpty)
 
-        signedIn = true
+        session.isSignedIn = true
         router.completeAuthentication()
         #expect(router.sheet == nil)
         #expect(router.path(for: .home) == [.checkout])
@@ -70,4 +70,10 @@ struct RouterTests {
         #expect(router.selectedTab == .search)
         #expect(router.path(for: .search) == [.searchResults(ProductQuery(text: "linen"))])
     }
+}
+
+/// Reference-typed flag: a `@MainActor` closure is `Sendable`, so it can't capture a mutable local.
+@MainActor
+private final class FakeSessionFlag {
+    var isSignedIn = false
 }
