@@ -122,10 +122,9 @@ public actor SyncedCollection<Record: Identifiable & Codable & Sendable, Remote:
                         try await remote.upsert([upsert.record])
                         markPushed([(upsert.id, upsert.version)])
                     } catch where Self.isRejection(error) {
-                        Log.network
-                            .error(
-                                "Server rejected \(String(describing: upsert.id), privacy: .public): \(String(describing: error), privacy: .public)"
-                            )
+                        let recordID = String(describing: upsert.id)
+                        let reason = String(describing: error)
+                        Log.network.error("Server rejected \(recordID, privacy: .public): \(reason, privacy: .public)")
                         rejected.append(upsert.record)
                         entries.removeAll { $0.record.id == upsert.id }
                     }
